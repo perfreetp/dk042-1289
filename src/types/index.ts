@@ -55,6 +55,12 @@ export interface Prompt {
   viewCount: number;
 }
 
+export interface FieldChange {
+  field: string;
+  oldValue: string;
+  newValue: string;
+}
+
 export interface Version {
   id: string;
   promptId: string;
@@ -68,6 +74,8 @@ export interface Version {
   createdByName: string;
   createdAt: string;
   changeLog: string;
+  status: 'draft' | 'published';
+  changes: FieldChange[];
 }
 
 export interface TestRecord {
@@ -153,4 +161,30 @@ export interface AbandonedItem {
   spaceName?: string;
   lastActivity: string;
   daysInactive: number;
+}
+
+export interface SearchFilter {
+  keyword: string;
+  spaceId: string;
+  category: string;
+  tags: string[];
+  status: string;
+  createdBy: string;
+  dateFrom: string;
+  dateTo: string;
+  sortBy: string;
+  sortOrder: 'asc' | 'desc';
+}
+
+export interface TodoItem {
+  id: string;
+  type: 'review' | 'comment' | 'mention';
+  title: string;
+  description: string;
+  relatedId: string;
+  relatedType: 'prompt' | 'space';
+  priority: 'high' | 'medium' | 'low';
+  isRead: boolean;
+  createdAt: string;
+  link: string;
 }

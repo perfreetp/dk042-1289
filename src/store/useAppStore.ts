@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Space, Prompt, Version, TestRecord, Comment, Review, Member, RecycleItem, User } from '../types';
+import type { Space, Prompt, Version, TestRecord, Comment, Review, Member, RecycleItem, User, SearchFilter, FieldChange } from '../types';
 import {
   mockSpaces,
   mockPrompts,
@@ -23,18 +23,28 @@ interface AppState {
   recycleItems: RecycleItem[];
   users: User[];
   currentUserId: string;
+  viewAsUserId: string | null;
   currentSpaceId: string | null;
   currentPromptId: string | null;
+  searchFilter: SearchFilter;
+  lastSearchFilter: SearchFilter | null;
 
   setCurrentSpace: (id: string | null) => void;
   setCurrentPrompt: (id: string | null) => void;
   getCurrentUser: () => User | undefined;
+  getEffectiveUserId: () => string;
+  setViewAsUserId: (userId: string | null) => void;
   getCurrentUserRoleInSpace: (spaceId: string) => Member['role'] | null;
   canEditPrompt: (spaceId: string) => boolean;
   canDeletePrompt: (spaceId: string) => boolean;
   canInitiateReview: (spaceId: string) => boolean;
 
-  createSpace: (space: Omit<Space, 'id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'promptCount' | 'memberCount'>) => void;
+  setSearchFilter: (filter: Partial<SearchFilter>) => void;
+  saveSearchFilter: () => void;
+  restoreSearchFilter: () => void;
+  searchPrompts: () => Prompt[];
+
+  createSpace: (space: Omit<Space, 'id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'promptCount' | 'memberCount'>) => Space;
   updateSpace: (id: string, data: Partial<Space>) => void;
   deleteSpace: (id: string) => void;
   restoreSpace: (id: string) => void;
@@ -47,9 +57,10 @@ interface AppState {
   permanentDeletePrompt: (id: string) => void;
   incrementViewCount: (id: string) => void;
 
-  addVersion: (version: Omit<Version, 'id' | 'createdAt'>) => void;
+  addVersion: (version: Omit<Version, 'id' | 'createdAt'>, status?: 'draft' | 'published') => void;
   getVersionsByPromptId: (promptId: string) => Version[];
   rollbackToVersion: (promptId: string, versionId: string) => void;
+  compareVersions: (oldVersion: Version, newVersion: Version) => FieldChange[];
 
   addTestRecord: (record: Omit<TestRecord, 'id' | 'createdAt'>) => void;
   getTestRecordsByPromptId: (promptId: string) => TestRecord[];
@@ -57,8 +68,10 @@ interface AppState {
   addComment: (comment: Omit<Comment, 'id' | 'createdAt'>) => void;
   getCommentsByPromptId: (promptId: string) => Comment[];
 
-  createReview: (review: Omit<Review, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  createReview: (review: Omit<Review, 'id' | 'createdAt' | 'updatedAt'>) => Review;
   updateReviewStatus: (id: string, status: Review['status'], conclusion?: string) => void;
+  getReviewsForUser: (userId: string) => Review[];
+  getLatestReviewForPrompt: (promptId: string) => Review | undefined;
 
   addMember: (member: Omit<Member, 'id' | 'joinedAt'>) => void;
   updateMemberRole: (memberId: string, role: Member['role']) => void;
@@ -81,8 +94,22 @@ export const useAppStore = create<AppState>()(
       users: mockUsers,
       recycleItems: [],
       currentUserId: 'user-1',
+      viewAsUserId: null,
       currentSpaceId: null,
       currentPromptId: null,
+      searchFilter: {
+        keyword: '',
+        spaceId: '',
+        category: '',
+        tags: [],
+        status: '',
+        createdBy: '',
+        dateFrom: '',
+        dateTo: '',
+        sortBy: 'updatedAt',
+        sortOrder: 'desc',
+      },
+      lastSearchFilter: null,
 
       setCurrentSpace: (id) => set({ currentSpaceId: id }),
       setCurrentPrompt: (id) => set({ currentPromptId: id }),
@@ -91,9 +118,16 @@ export const useAppStore = create<AppState>()(
         return get().users.find((u) => u.id === get().currentUserId);
       },
 
+      getEffectiveUserId: () => {
+        return get().viewAsUserId || get().currentUserId;
+      },
+
+      setViewAsUserId: (userId) => set({ viewAsUserId: userId }),
+
       getCurrentUserRoleInSpace: (spaceId) => {
-        const { currentUserId, members } = get();
-        const member = members.find((m) => m.spaceId === spaceId && m.userId === currentUserId);
+        const { getEffectiveUserId, members } = get();
+        const effectiveUserId = getEffectiveUserId();
+        const member = members.find((m) => m.spaceId === spaceId && m.userId === effectiveUserId);
         return member?.role || null;
       },
 
@@ -112,6 +146,81 @@ export const useAppStore = create<AppState>()(
         return role === 'owner' || role === 'admin' || role === 'editor';
       },
 
+      setSearchFilter: (filter) => {
+        set((state) => ({
+          searchFilter: { ...state.searchFilter, ...filter },
+        }));
+      },
+
+      saveSearchFilter: () => {
+        set((state) => ({
+          lastSearchFilter: { ...state.searchFilter },
+        }));
+      },
+
+      restoreSearchFilter: () => {
+        const { lastSearchFilter } = get();
+        if (lastSearchFilter) {
+          set({ searchFilter: { ...lastSearchFilter } });
+        }
+      },
+
+      searchPrompts: () => {
+        const { searchFilter, prompts, spaces } = get();
+        let result = prompts.filter((p) => !p.isDeleted);
+
+        if (searchFilter.keyword) {
+          const keyword = searchFilter.keyword.toLowerCase();
+          result = result.filter(
+            (p) =>
+              p.title.toLowerCase().includes(keyword) ||
+              p.description.toLowerCase().includes(keyword) ||
+              p.content.toLowerCase().includes(keyword)
+          );
+        }
+
+        if (searchFilter.spaceId) {
+          result = result.filter((p) => p.spaceId === searchFilter.spaceId);
+        }
+
+        if (searchFilter.category) {
+          result = result.filter((p) => p.category === searchFilter.category);
+        }
+
+        if (searchFilter.tags.length > 0) {
+          result = result.filter((p) =>
+            searchFilter.tags.some((tag) => p.tags.includes(tag))
+          );
+        }
+
+        if (searchFilter.status) {
+          result = result.filter((p) => p.status === searchFilter.status);
+        }
+
+        if (searchFilter.createdBy) {
+          result = result.filter((p) => p.createdBy === searchFilter.createdBy);
+        }
+
+        if (searchFilter.dateFrom) {
+          result = result.filter((p) => p.createdAt >= searchFilter.dateFrom);
+        }
+
+        if (searchFilter.dateTo) {
+          result = result.filter((p) => p.createdAt <= searchFilter.dateTo + 'T23:59:59');
+        }
+
+        result.sort((a, b) => {
+          const aVal = a[searchFilter.sortBy as keyof Prompt] as string | number;
+          const bVal = b[searchFilter.sortBy as keyof Prompt] as string | number;
+          if (searchFilter.sortOrder === 'asc') {
+            return aVal > bVal ? 1 : -1;
+          }
+          return aVal < bVal ? 1 : -1;
+        });
+
+        return result;
+      },
+
       createSpace: (spaceData) => {
         const newSpace: Space = {
           ...spaceData,
@@ -123,6 +232,7 @@ export const useAppStore = create<AppState>()(
           memberCount: 1,
         };
         set((state) => ({ spaces: [...state.spaces, newSpace] }));
+        return newSpace;
       },
 
       updateSpace: (id, data) => {
@@ -134,15 +244,17 @@ export const useAppStore = create<AppState>()(
       },
 
       deleteSpace: (id) => {
-        const { spaces, prompts } = get();
+        const { spaces, prompts, getEffectiveUserId } = get();
         const space = spaces.find((s) => s.id === id);
         if (!space) return;
+
+        const user = get().users.find((u) => u.id === getEffectiveUserId());
 
         const recycleItem: RecycleItem = {
           id: `recycle-${Date.now()}`,
           type: 'space',
           title: space.name,
-          deletedBy: '当前用户',
+          deletedBy: user?.name || '当前用户',
           deletedAt: new Date().toISOString(),
           originalData: space,
         };
@@ -153,7 +265,7 @@ export const useAppStore = create<AppState>()(
           type: 'prompt',
           title: p.title,
           spaceName: space.name,
-          deletedBy: '当前用户',
+          deletedBy: user?.name || '当前用户',
           deletedAt: new Date().toISOString(),
           originalData: p,
         }));
@@ -188,6 +300,22 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           spaces: state.spaces.filter((s) => s.id !== id),
           prompts: state.prompts.filter((p) => p.spaceId !== id),
+          versions: state.versions.filter((v) => {
+            const prompt = state.prompts.find((p) => p.id === v.promptId);
+            return prompt?.spaceId !== id;
+          }),
+          comments: state.comments.filter((c) => {
+            const prompt = state.prompts.find((p) => p.id === c.promptId);
+            return prompt?.spaceId !== id;
+          }),
+          testRecords: state.testRecords.filter((t) => {
+            const prompt = state.prompts.find((p) => p.id === t.promptId);
+            return prompt?.spaceId !== id;
+          }),
+          reviews: state.reviews.filter((r) => {
+            const prompt = state.prompts.find((p) => p.id === r.promptId);
+            return prompt?.spaceId !== id;
+          }),
           recycleItems: state.recycleItems.filter(
             (item) => !(item.type === 'space' && (item.originalData as Space).id === id) &&
                       !(item.type === 'prompt' && (item.originalData as Prompt).spaceId === id)
@@ -220,6 +348,8 @@ export const useAppStore = create<AppState>()(
           createdByName: promptData.createdByName,
           createdAt: new Date().toISOString(),
           changeLog: '创建初始版本',
+          status: 'published',
+          changes: [],
         };
 
         set((state) => ({
@@ -242,17 +372,19 @@ export const useAppStore = create<AppState>()(
       },
 
       deletePrompt: (id) => {
-        const { prompts } = get();
+        const { prompts, getEffectiveUserId } = get();
         const prompt = prompts.find((p) => p.id === id);
         const space = get().spaces.find((s) => s.id === prompt?.spaceId);
         if (!prompt) return;
+
+        const user = get().users.find((u) => u.id === getEffectiveUserId());
 
         const recycleItem: RecycleItem = {
           id: `recycle-${id}`,
           type: 'prompt',
           title: prompt.title,
           spaceName: space?.name,
-          deletedBy: '当前用户',
+          deletedBy: user?.name || '当前用户',
           deletedAt: new Date().toISOString(),
           originalData: prompt,
         };
@@ -283,6 +415,7 @@ export const useAppStore = create<AppState>()(
           versions: state.versions.filter((v) => v.promptId !== id),
           testRecords: state.testRecords.filter((t) => t.promptId !== id),
           comments: state.comments.filter((c) => c.promptId !== id),
+          reviews: state.reviews.filter((r) => r.promptId !== id),
           recycleItems: state.recycleItems.filter(
             (item) => !(item.type === 'prompt' && (item.originalData as Prompt).id === id)
           ),
@@ -297,11 +430,44 @@ export const useAppStore = create<AppState>()(
         }));
       },
 
-      addVersion: (versionData) => {
+      compareVersions: (oldVersion, newVersion) => {
+        const changes: FieldChange[] = [];
+
+        if (oldVersion.content !== newVersion.content) {
+          changes.push({ field: '内容', oldValue: oldVersion.content.substring(0, 100) + '...', newValue: newVersion.content.substring(0, 100) + '...' });
+        }
+        if (JSON.stringify(oldVersion.variables) !== JSON.stringify(newVersion.variables)) {
+          changes.push({ field: '变量', oldValue: `${oldVersion.variables.length} 个变量`, newValue: `${newVersion.variables.length} 个变量` });
+        }
+        if (JSON.stringify(oldVersion.steps) !== JSON.stringify(newVersion.steps)) {
+          changes.push({ field: '步骤', oldValue: `${oldVersion.steps.length} 个步骤`, newValue: `${newVersion.steps.length} 个步骤` });
+        }
+        if (JSON.stringify(oldVersion.examples) !== JSON.stringify(newVersion.examples)) {
+          changes.push({ field: '示例', oldValue: `${oldVersion.examples.length} 个示例`, newValue: `${newVersion.examples.length} 个示例` });
+        }
+        if (oldVersion.notes !== newVersion.notes) {
+          changes.push({ field: '注意事项', oldValue: oldVersion.notes || '无', newValue: newVersion.notes || '无' });
+        }
+
+        return changes;
+      },
+
+      addVersion: (versionData, status = 'published') => {
+        const { versions } = get();
+        const oldVersions = versions.filter((v) => v.promptId === versionData.promptId);
+        const lastVersion = oldVersions.sort((a, b) => b.versionNumber - a.versionNumber)[0];
+
+        let changes: FieldChange[] = [];
+        if (lastVersion) {
+          changes = get().compareVersions(lastVersion, versionData as Version);
+        }
+
         const newVersion: Version = {
           ...versionData,
           id: `version-${Date.now()}`,
           createdAt: new Date().toISOString(),
+          status,
+          changes,
         };
 
         set((state) => ({
@@ -332,11 +498,32 @@ export const useAppStore = create<AppState>()(
       rollbackToVersion: (promptId, versionId) => {
         const version = get().versions.find((v) => v.id === versionId);
         const prompt = get().prompts.find((p) => p.id === promptId);
+        const { getEffectiveUserId, getCurrentUser } = get();
         if (!version || !prompt) return;
 
+        const user = getCurrentUser();
+        const effectiveUserId = getEffectiveUserId();
+
         const newVersionNumber = prompt.currentVersion + 1;
-        const newVersion: Version = {
-          id: `version-${Date.now()}`,
+
+        const oldVersion: Version = {
+          id: '',
+          promptId,
+          versionNumber: prompt.currentVersion,
+          content: prompt.content,
+          variables: prompt.variables,
+          steps: prompt.steps,
+          examples: prompt.examples,
+          notes: prompt.notes,
+          createdBy: effectiveUserId,
+          createdByName: user?.name || '',
+          createdAt: '',
+          changeLog: '',
+          status: 'published',
+          changes: [],
+        };
+
+        const newVersionData = {
           promptId,
           versionNumber: newVersionNumber,
           content: version.content,
@@ -344,10 +531,19 @@ export const useAppStore = create<AppState>()(
           steps: version.steps,
           examples: version.examples,
           notes: version.notes,
-          createdBy: 'user-1',
-          createdByName: '张明',
-          createdAt: new Date().toISOString(),
+          createdBy: effectiveUserId,
+          createdByName: user?.name || '',
           changeLog: `回滚到 v${version.versionNumber} 版本`,
+          status: 'published' as const,
+        };
+
+        const changes = get().compareVersions(oldVersion, newVersionData);
+
+        const newVersion: Version = {
+          ...newVersionData,
+          id: `version-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          changes,
         };
 
         set((state) => ({
@@ -413,9 +609,13 @@ export const useAppStore = create<AppState>()(
           updatedAt: new Date().toISOString(),
         };
         set((state) => ({ reviews: [...state.reviews, newReview] }));
+        return newReview;
       },
 
       updateReviewStatus: (id, status, conclusion) => {
+        const review = get().reviews.find((r) => r.id === id);
+        if (!review) return;
+
         set((state) => ({
           reviews: state.reviews.map((r) =>
             r.id === id
@@ -423,6 +623,19 @@ export const useAppStore = create<AppState>()(
               : r
           ),
         }));
+      },
+
+      getReviewsForUser: (userId) => {
+        return get()
+          .reviews.filter((r) => r.reviewers.includes(userId) && r.status === 'pending')
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      },
+
+      getLatestReviewForPrompt: (promptId) => {
+        const reviews = get()
+          .reviews.filter((r) => r.promptId === promptId)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        return reviews[0];
       },
 
       addMember: (memberData) => {
@@ -477,6 +690,15 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           spaces: state.spaces.filter((s) => !spaceIds.includes(s.id)),
           prompts: state.prompts.filter((p) => !promptIds.includes(p.id)),
+          versions: state.versions.filter(
+            (v) => !promptIds.includes(v.promptId) &&
+              !state.spaces
+                .filter((s) => spaceIds.includes(s.id))
+                .some((s) => state.prompts.find((p) => p.id === v.promptId)?.spaceId === s.id)
+          ),
+          comments: state.comments.filter((c) => !promptIds.includes(c.promptId)),
+          testRecords: state.testRecords.filter((t) => !promptIds.includes(t.promptId)),
+          reviews: state.reviews.filter((r) => !promptIds.includes(r.promptId)),
           recycleItems: [],
         }));
       },

@@ -353,6 +353,8 @@ export const mockVersions: Version[] = [
     createdByName: '张明',
     createdAt: '2024-01-20T10:00:00Z',
     changeLog: '创建初始版本',
+    status: 'published',
+    changes: [],
   },
   {
     id: 'version-1-2',
@@ -367,6 +369,10 @@ export const mockVersions: Version[] = [
     createdByName: '张明',
     createdAt: '2024-02-10T14:00:00Z',
     changeLog: '增加标题选项数量，优化正文结构',
+    status: 'published',
+    changes: [
+      { field: '内容', oldValue: '初始版本...', newValue: '优化后的...' },
+    ],
   },
   {
     id: 'version-1-3',
@@ -381,6 +387,13 @@ export const mockVersions: Version[] = [
     createdByName: '李华',
     createdAt: '2024-03-20T14:30:00Z',
     changeLog: '重构提示词结构，增加变量和步骤说明',
+    status: 'published',
+    changes: [
+      { field: '变量', oldValue: '0 个变量', newValue: '4 个变量' },
+      { field: '步骤', oldValue: '0 个步骤', newValue: '3 个步骤' },
+      { field: '示例', oldValue: '0 个示例', newValue: '1 个示例' },
+      { field: '注意事项', oldValue: '无', newValue: '有' },
+    ],
   },
 ];
 

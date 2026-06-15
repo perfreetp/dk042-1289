@@ -1,4 +1,29 @@
-import type { Space, Prompt } from '../types';
+import type { Space, Prompt, Version, Comment } from '../types';
+
+export interface ExportData {
+  version: string;
+  exportedAt: string;
+  spaces?: Space[];
+  prompts?: Prompt[];
+  versions?: Version[];
+  comments?: Comment[];
+}
+
+export const exportFullData = (
+  spaces: Space[],
+  prompts: Prompt[],
+  versions: Version[],
+  comments: Comment[]
+): ExportData => {
+  return {
+    version: '1.0',
+    exportedAt: new Date().toISOString(),
+    spaces: spaces.filter(s => !s.isDeleted),
+    prompts: prompts.filter(p => !p.isDeleted),
+    versions,
+    comments,
+  };
+};
 
 export const exportToJSON = (data: any, filename: string) => {
   const jsonStr = JSON.stringify(data, null, 2);
@@ -11,6 +36,105 @@ export const exportToJSON = (data: any, filename: string) => {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+};
+
+export const parseImportData = (
+  data: any,
+  targetSpaceId?: string
+): {
+  spaces: Partial<Space>[];
+  prompts: (Partial<Prompt> & { originalSpaceId?: string; originalId?: string })[];
+  versions: Version[];
+  comments: Comment[];
+  spaceIdMap: Record<string, string>;
+  promptIdMap: Record<string, string>;
+} => {
+  const result = {
+    spaces: [] as Partial<Space>[],
+    prompts: [] as (Partial<Prompt> & { originalSpaceId?: string; originalId?: string })[],
+    versions: [] as Version[],
+    comments: [] as Comment[],
+    spaceIdMap: {} as Record<string, string>,
+    promptIdMap: {} as Record<string, string>,
+  };
+
+  if (data.spaces && Array.isArray(data.spaces)) {
+    data.spaces.forEach((space: Space) => {
+      const newId = `space-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      result.spaceIdMap[space.id] = newId;
+      result.spaces.push({
+        ...space,
+        id: newId,
+      });
+    });
+  }
+
+  if (data.prompts && Array.isArray(data.prompts)) {
+    data.prompts.forEach((prompt: Prompt) => {
+      const newId = `prompt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      result.promptIdMap[prompt.id] = newId;
+
+      let newSpaceId = targetSpaceId;
+      if (!newSpaceId && prompt.spaceId) {
+        newSpaceId = result.spaceIdMap[prompt.spaceId] || targetSpaceId;
+      }
+
+      result.prompts.push({
+        ...prompt,
+        id: newId,
+        spaceId: newSpaceId,
+        originalId: prompt.id,
+        originalSpaceId: prompt.spaceId,
+      });
+    });
+  }
+
+  if (data.versions && Array.isArray(data.versions)) {
+    data.versions.forEach((version: Version) => {
+      const newPromptId = result.promptIdMap[version.promptId];
+      if (newPromptId) {
+        result.versions.push({
+          ...version,
+          id: `version-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          promptId: newPromptId,
+        });
+      }
+    });
+  }
+
+  if (data.comments && Array.isArray(data.comments)) {
+    data.comments.forEach((comment: Comment) => {
+      const newPromptId = result.promptIdMap[comment.promptId];
+      if (newPromptId) {
+        result.comments.push({
+          ...comment,
+          id: `comment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          promptId: newPromptId,
+        });
+      }
+    });
+  }
+
+  if (Array.isArray(data) && data.length > 0 && data[0].content !== undefined) {
+    data.forEach((prompt: Partial<Prompt>) => {
+      const newId = `prompt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      result.prompts.push({
+        ...prompt,
+        id: newId,
+        spaceId: targetSpaceId,
+        variables: prompt.variables || [],
+        steps: prompt.steps || [],
+        examples: prompt.examples || [],
+        notes: prompt.notes || '',
+        tags: prompt.tags || [],
+        status: prompt.status || 'published',
+        createdBy: prompt.createdBy || 'user-1',
+        createdByName: prompt.createdByName || '导入',
+      });
+    });
+  }
+
+  return result;
 };
 
 export const exportToCSV = (prompts: Prompt[], filename: string) => {
