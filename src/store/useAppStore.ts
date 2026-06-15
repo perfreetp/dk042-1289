@@ -57,10 +57,10 @@ interface AppState {
   permanentDeletePrompt: (id: string) => void;
   incrementViewCount: (id: string) => void;
 
-  addVersion: (version: Omit<Version, 'id' | 'createdAt'>, status?: 'draft' | 'published') => void;
+  addVersion: (version: Omit<Version, 'id' | 'createdAt' | 'status' | 'changes'>, status?: 'draft' | 'published') => void;
   getVersionsByPromptId: (promptId: string) => Version[];
   rollbackToVersion: (promptId: string, versionId: string) => void;
-  compareVersions: (oldVersion: Version, newVersion: Version) => FieldChange[];
+  compareVersions: (oldVersion: Partial<Version>, newVersion: Partial<Version>) => FieldChange[];
 
   addTestRecord: (record: Omit<TestRecord, 'id' | 'createdAt'>) => void;
   getTestRecordsByPromptId: (promptId: string) => TestRecord[];

@@ -34,11 +34,6 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
   const [expanded, setExpanded] = useState(true);
 
   const categories = ['营销文案', '需求文档', '前端开发', '数据查询', '客服话术', '产品设计'];
-  const statuses = [
-    { value: 'draft', label: '草稿' },
-    { value: 'published', label: '已发布' },
-    { value: 'archived', label: '已归档' },
-  ];
   const sortOptions = [
     { value: 'updatedAt', label: '更新时间' },
     { value: 'createdAt', label: '创建时间' },
@@ -99,24 +94,17 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
   if (!show) return null;
 
   return (
-    <AnimatePresence>
+    <div className="fixed inset-0 bg-dark-950/80 backdrop-blur-sm z-50 flex items-start justify-center pt-24" onClick={onClose}>
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-dark-950/80 backdrop-blur-sm z-50 flex items-start justify-center pt-24"
-        onClick={onClose}
+        initial={{ y: -20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: -20, opacity: 0 }}
+        className="w-full max-w-4xl"
+        onClick={(e) => e.stopPropagation()}
       >
-        <motion.div
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: -20, opacity: 0 }}
-          className="w-full max-w-4xl max-h-[80vh overflow-hidden"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="glass-card overflow-hidden">
-            <div className="p-6 border-b border-dark-700/50">
-              <div className="flex items-center gap-4">
+        <div className="glass-card overflow-hidden">
+          <div className="p-6 border-b border-dark-700/50">
+            <div className="flex items-center gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-400" />
                 <input
@@ -129,20 +117,13 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
                   autoFocus
                 />
               </div>
-              <button
-                onClick={handleSearch}
-                className="btn-primary px-8 py-3 text-base"
-              >
+              <button onClick={handleSearch} className="btn-primary px-8 py-3 text-base">
                 搜索
               </button>
-              <button
-                onClick={onClose}
-                className="p-3 text-dark-400 hover:text-white hover:bg-dark-700/50 rounded-xl transition-colors"
-              >
+              <button onClick={onClose} className="p-3 text-dark-400 hover:text-white hover:bg-dark-700/50 rounded-xl transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
-          </div>
 
             <div className="flex items-center justify-between mt-4">
               <button
@@ -185,13 +166,10 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
                       >
                         <option value="">全部空间</option>
                         {spaces.filter(s => !s.isDeleted).map((space) => (
-                          <option key={space.id} value={space.id}>
-                            {space.name}
-                          </option>
+                          <option key={space.id} value={space.id}>{space.name}</option>
                         ))}
                       </select>
                     </div>
-
                     <div>
                       <label className="flex items-center gap-2 text-sm font-medium text-dark-300 mb-3">
                         <Tag className="w-4 h-4 text-primary-400" />
@@ -204,9 +182,7 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
                       >
                         <option value="">全部分类</option>
                         {categories.map((cat) => (
-                          <option key={cat} value={cat}>
-                            {cat}
-                          </option>
+                          <option key={cat} value={cat}>{cat}</option>
                         ))}
                       </select>
                     </div>
@@ -231,7 +207,7 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
                           >
                             #{tag}
                           </button>
-                          ))
+                        ))
                       ) : (
                         <span className="text-sm text-dark-500">暂无标签</span>
                       )}
@@ -245,7 +221,11 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
                         状态
                       </label>
                       <div className="flex gap-2">
-                        {statuses.map((status) => (
+                        {[
+                          { value: 'draft', label: '草稿' },
+                          { value: 'published', label: '已发布' },
+                          { value: 'archived', label: '已归档' },
+                        ].map((status) => (
                           <button
                             key={status.value}
                             onClick={() => setSearchFilter({ status: searchFilter.status === status.value ? '' : status.value })}
@@ -260,7 +240,6 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
                         ))}
                       </div>
                     </div>
-
                     <div>
                       <label className="flex items-center gap-2 text-sm font-medium text-dark-300 mb-3">
                         <User className="w-4 h-4 text-primary-400" />
@@ -273,9 +252,7 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
                       >
                         <option value="">全部创建人</option>
                         {allCreators.map((creator) => (
-                          <option key={creator.id} value={creator.id}>
-                            {creator.name}
-                          </option>
+                          <option key={creator.id} value={creator.id}>{creator.name}</option>
                         ))}
                       </select>
                     </div>
@@ -310,25 +287,19 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
 
                   <div className="grid grid-cols-2 gap-6">
                     <div>
-                      <label className="flex items-center gap-2 text-sm font-medium text-dark-300 mb-3">
-                        排序方式
-                      </label>
+                      <label className="text-sm font-medium text-dark-300 mb-3 block">排序方式</label>
                       <select
                         value={searchFilter.sortBy}
                         onChange={(e) => setSearchFilter({ sortBy: e.target.value })}
                         className="w-full px-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-dark-200 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                       >
                         {sortOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="flex items-center gap-2 text-sm font-medium text-dark-300 mb-3">
-                        排序顺序
-                      </label>
+                      <label className="text-sm font-medium text-dark-300 mb-3 block">排序顺序</label>
                       <div className="flex gap-2">
                         <button
                           onClick={() => setSearchFilter({ sortOrder: 'desc' })}
@@ -371,8 +342,7 @@ export default function AdvancedSearch({ show, onClose, onSearch }: AdvancedSear
             </button>
           </div>
         </div>
-        </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </div>
   );
 }

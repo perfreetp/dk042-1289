@@ -19,15 +19,18 @@ import {
   CheckCircle,
   AlertCircle,
   FolderPlus,
+  ListTodo,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import {
   exportToJSON,
   exportToCSV,
+  exportFullData,
   importFromJSON,
   importFromCSV,
+  parseImportData,
 } from '../../utils/importExport';
-import type { Space, Prompt, Variable, Step, Example } from '../../types';
+import type { Space, Prompt } from '../../types';
 
 const statCards = [
   {
@@ -77,10 +80,15 @@ export default function Dashboard() {
   const {
     spaces,
     prompts,
+    versions,
+    comments,
     testRecords,
     createSpace,
     createPrompt,
-    reviews,
+    addVersion,
+    addComment,
+    getReviewsForUser,
+    getEffectiveUserId,
   } = useAppStore();
 
   const [showImportModal, setShowImportModal] = useState(false);
@@ -89,6 +97,7 @@ export default function Dashboard() {
   const [importTarget, setImportTarget] = useState<'new-space' | 'existing-space'>('new-space');
   const [selectedSpaceId, setSelectedSpaceId] = useState('');
   const [importPreview, setImportPreview] = useState<any[]>([]);
+  const [parsedImportData, setParsedImportData] = useState<ReturnType<typeof parseImportData> | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ success: number; failed: number } | null>(null);
   const [newSpaceName, setNewSpaceName] = useState('');
@@ -96,7 +105,8 @@ export default function Dashboard() {
 
   const activeSpaces = spaces.filter((s) => !s.isDeleted);
   const activePrompts = prompts.filter((p) => !p.isDeleted);
-  const pendingReviews = reviews.filter((r) => r.status === 'pending' || r.status === 'reviewing');
+  const effectiveUserId = getEffectiveUserId();
+  const pendingReviews = getReviewsForUser(effectiveUserId);
 
   const stats = {
     spaces: activeSpaces.length,
@@ -118,20 +128,24 @@ export default function Dashboard() {
     if (!file) return;
 
     try {
-      let data: any;
+      let rawData: any;
 
       if (importType === 'json') {
-        data = await importFromJSON(file);
+        rawData = await importFromJSON(file);
+        const parsed = parseImportData(rawData);
+        setParsedImportData(parsed);
+        const previewItems = parsed.prompts.length > 0
+          ? parsed.prompts
+          : parsed.spaces.length > 0
+          ? parsed.spaces
+          : [];
+        setImportPreview(previewItems);
       } else {
-        data = await importFromCSV(file);
-      }
-
-      if (Array.isArray(data)) {
-        setImportPreview(data);
-      } else if (data.spaces || data.prompts) {
-        setImportPreview(data.prompts || data.spaces || []);
-      } else {
-        setImportPreview([data]);
+        rawData = await importFromCSV(file);
+        const targetId = importTarget === 'existing-space' ? selectedSpaceId : undefined;
+        const parsed = parseImportData(rawData, targetId);
+        setParsedImportData(parsed);
+        setImportPreview(parsed.prompts);
       }
 
       setImportResult(null);
@@ -148,65 +162,229 @@ export default function Dashboard() {
     let failedCount = 0;
 
     try {
-      if (importTarget === 'new-space' && newSpaceName.trim()) {
-        const spaceColors = ['#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#06b6d4', '#ec4899'];
-        const randomColor = spaceColors[Math.floor(Math.random() * spaceColors.length)];
+      if (importType === 'json' && parsedImportData) {
+        const { spaces: parsedSpaces, prompts: parsedPrompts, versions: parsedVersions, comments: parsedComments, spaceIdMap } = parsedImportData;
 
-        const tempSpaceId = `space-${Date.now()}`;
-        createSpace({
-          name: newSpaceName.trim(),
-          description: '通过批量导入创建',
-          icon: 'FileText',
-          color: randomColor,
-          ownerId: 'user-1',
-        });
+        if (importTarget === 'new-space') {
+          let targetSpaceId: string | null = null;
 
-        const newSpace = spaces.find((s) => s.name === newSpaceName.trim());
-        if (newSpace) {
-          for (const item of importPreview) {
+          if (parsedSpaces.length > 0) {
+            for (const spaceData of parsedSpaces) {
+              const newSpace = createSpace({
+                name: spaceData.name || newSpaceName.trim() || '导入的空间',
+                description: spaceData.description || '通过批量导入创建',
+                icon: spaceData.icon || 'FileText',
+                color: spaceData.color || '#6366f1',
+                ownerId: effectiveUserId,
+              });
+
+              const oldId = Object.entries(spaceIdMap).find(([, v]) => v === spaceData.id);
+              if (oldId) {
+                spaceIdMap[oldId[0]] = newSpace.id;
+              }
+
+              if (!targetSpaceId) {
+                targetSpaceId = newSpace.id;
+              }
+            }
+          } else {
+            const newSpace = createSpace({
+              name: newSpaceName.trim() || '导入的空间',
+              description: '通过批量导入创建',
+              icon: 'FileText',
+              color: '#6366f1',
+              ownerId: effectiveUserId,
+            });
+            targetSpaceId = newSpace.id;
+          }
+
+          for (const promptData of parsedPrompts) {
             try {
+              const resolvedSpaceId = promptData.spaceId || targetSpaceId;
+              if (!resolvedSpaceId) {
+                failedCount++;
+                continue;
+              }
+
               createPrompt({
-                spaceId: newSpace.id,
-                title: item.title || item.name || '未命名提示词',
-                description: item.description || '',
-                content: item.content || '',
-                category: item.category || '未分类',
-                tags: item.tags || [],
+                spaceId: resolvedSpaceId,
+                title: promptData.title || '未命名提示词',
+                description: promptData.description || '',
+                content: promptData.content || '',
+                category: promptData.category || '未分类',
+                tags: promptData.tags || [],
                 status: 'draft',
-                variables: item.variables || [],
-                steps: item.steps || [],
-                examples: item.examples || [],
-                notes: item.notes || '',
-                createdBy: 'user-1',
-                createdByName: '张明',
+                variables: promptData.variables || [],
+                steps: promptData.steps || [],
+                examples: promptData.examples || [],
+                notes: promptData.notes || '',
+                createdBy: promptData.createdBy || effectiveUserId,
+                createdByName: promptData.createdByName || '导入',
               });
               successCount++;
             } catch {
               failedCount++;
             }
           }
+
+          for (const versionData of parsedVersions) {
+            try {
+              addVersion({
+                promptId: versionData.promptId,
+                versionNumber: versionData.versionNumber,
+                content: versionData.content,
+                variables: versionData.variables,
+                steps: versionData.steps,
+                examples: versionData.examples,
+                notes: versionData.notes,
+                createdBy: versionData.createdBy || effectiveUserId,
+                createdByName: versionData.createdByName || '导入',
+                changeLog: versionData.changeLog || '导入的版本',
+                status: versionData.status || 'published',
+                changes: versionData.changes || [],
+              });
+            } catch {
+              // version import is best-effort
+            }
+          }
+
+          for (const commentData of parsedComments) {
+            try {
+              addComment({
+                promptId: commentData.promptId,
+                userId: commentData.userId || effectiveUserId,
+                userName: commentData.userName || '导入',
+                userAvatar: commentData.userAvatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=import',
+                content: commentData.content,
+                parentId: commentData.parentId || null,
+              });
+            } catch {
+              // comment import is best-effort
+            }
+          }
+
+          if (targetSpaceId) {
+            setTimeout(() => navigate(`/spaces/${targetSpaceId}`), 300);
+          }
+        } else if (importTarget === 'existing-space' && selectedSpaceId) {
+          for (const promptData of parsedPrompts) {
+            try {
+              createPrompt({
+                spaceId: selectedSpaceId,
+                title: promptData.title || '未命名提示词',
+                description: promptData.description || '',
+                content: promptData.content || '',
+                category: promptData.category || '未分类',
+                tags: promptData.tags || [],
+                status: 'draft',
+                variables: promptData.variables || [],
+                steps: promptData.steps || [],
+                examples: promptData.examples || [],
+                notes: promptData.notes || '',
+                createdBy: promptData.createdBy || effectiveUserId,
+                createdByName: promptData.createdByName || '导入',
+              });
+              successCount++;
+            } catch {
+              failedCount++;
+            }
+          }
+
+          for (const versionData of parsedVersions) {
+            try {
+              addVersion({
+                promptId: versionData.promptId,
+                versionNumber: versionData.versionNumber,
+                content: versionData.content,
+                variables: versionData.variables,
+                steps: versionData.steps,
+                examples: versionData.examples,
+                notes: versionData.notes,
+                createdBy: versionData.createdBy || effectiveUserId,
+                createdByName: versionData.createdByName || '导入',
+                changeLog: versionData.changeLog || '导入的版本',
+                status: versionData.status || 'published',
+                changes: versionData.changes || [],
+              });
+            } catch {
+              // version import is best-effort
+            }
+          }
+
+          for (const commentData of parsedComments) {
+            try {
+              addComment({
+                promptId: commentData.promptId,
+                userId: commentData.userId || effectiveUserId,
+                userName: commentData.userName || '导入',
+                userAvatar: commentData.userAvatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=import',
+                content: commentData.content,
+                parentId: commentData.parentId || null,
+              });
+            } catch {
+              // comment import is best-effort
+            }
+          }
         }
-      } else if (importTarget === 'existing-space' && selectedSpaceId) {
-        for (const item of importPreview) {
-          try {
-            createPrompt({
-              spaceId: selectedSpaceId,
-              title: item.title || item.name || '未命名提示词',
-              description: item.description || '',
-              content: item.content || '',
-              category: item.category || '未分类',
-              tags: item.tags || [],
-              status: 'draft',
-              variables: item.variables || [],
-              steps: item.steps || [],
-              examples: item.examples || [],
-              notes: item.notes || '',
-              createdBy: 'user-1',
-              createdByName: '张明',
-            });
-            successCount++;
-          } catch {
-            failedCount++;
+      } else if (importType === 'csv' && parsedImportData) {
+        const targetSpaceId =
+          importTarget === 'existing-space' ? selectedSpaceId : null;
+
+        if (importTarget === 'new-space') {
+          const newSpace = createSpace({
+            name: newSpaceName.trim() || '导入的空间',
+            description: '通过批量导入创建',
+            icon: 'FileText',
+            color: '#6366f1',
+            ownerId: effectiveUserId,
+          });
+
+          for (const promptData of parsedImportData.prompts) {
+            try {
+              createPrompt({
+                spaceId: newSpace.id,
+                title: promptData.title || '未命名提示词',
+                description: promptData.description || '',
+                content: promptData.content || '',
+                category: promptData.category || '未分类',
+                tags: promptData.tags || [],
+                status: 'draft',
+                variables: promptData.variables || [],
+                steps: promptData.steps || [],
+                examples: promptData.examples || [],
+                notes: promptData.notes || '',
+                createdBy: promptData.createdBy || effectiveUserId,
+                createdByName: promptData.createdByName || '导入',
+              });
+              successCount++;
+            } catch {
+              failedCount++;
+            }
+          }
+
+          setTimeout(() => navigate(`/spaces/${newSpace.id}`), 300);
+        } else if (targetSpaceId) {
+          for (const promptData of parsedImportData.prompts) {
+            try {
+              createPrompt({
+                spaceId: targetSpaceId,
+                title: promptData.title || '未命名提示词',
+                description: promptData.description || '',
+                content: promptData.content || '',
+                category: promptData.category || '未分类',
+                tags: promptData.tags || [],
+                status: 'draft',
+                variables: promptData.variables || [],
+                steps: promptData.steps || [],
+                examples: promptData.examples || [],
+                notes: promptData.notes || '',
+                createdBy: promptData.createdBy || effectiveUserId,
+                createdByName: promptData.createdByName || '导入',
+              });
+              successCount++;
+            } catch {
+              failedCount++;
+            }
           }
         }
       }
@@ -221,13 +399,7 @@ export default function Dashboard() {
   };
 
   const handleExportJSON = () => {
-    const exportData = {
-      exportTime: new Date().toISOString(),
-      spaces: activeSpaces,
-      prompts: activePrompts.map((p) => ({
-        ...p,
-      })),
-    };
+    const exportData = exportFullData(activeSpaces, activePrompts, versions, comments);
     exportToJSON(exportData, `prompt-hub-export-${Date.now()}`);
     setShowExportModal(false);
   };
@@ -240,6 +412,7 @@ export default function Dashboard() {
   const closeImportModal = () => {
     setShowImportModal(false);
     setImportPreview([]);
+    setParsedImportData(null);
     setImportResult(null);
     setNewSpaceName('');
     if (fileInputRef.current) {
@@ -487,25 +660,62 @@ export default function Dashboard() {
           </div>
 
           <div className="glass-card p-6">
-            <h3 className="font-display text-lg font-semibold text-white mb-4">待处理任务</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display text-lg font-semibold text-white">待处理任务</h3>
+              {pendingReviews.length > 0 && (
+                <span className="text-xs px-2 py-1 rounded-full bg-amber-500/20 text-amber-400 font-medium">
+                  {pendingReviews.length} 待办
+                </span>
+              )}
+            </div>
             <div className="space-y-3">
-              <div
-                className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 cursor-pointer hover:bg-amber-500/20 transition-colors"
-                onClick={() => navigate('/reviews')}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <MessageSquare className="w-4 h-4 text-amber-400" />
+              {pendingReviews.length > 0 && (
+                <div className="space-y-2 mb-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ListTodo className="w-4 h-4 text-amber-400" />
+                    <span className="text-sm font-medium text-amber-300">待评审</span>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-white">
-                      {pendingReviews.length} 个待评审提示词
-                    </p>
-                    <p className="text-xs text-dark-400 mt-1">需要你的审核意见</p>
+                  {pendingReviews.map((review) => (
+                    <div
+                      key={review.id}
+                      className="flex items-center gap-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 cursor-pointer hover:bg-amber-500/20 transition-colors"
+                      onClick={() => navigate(`/spaces/${prompts.find((p) => p.id === review.promptId)?.spaceId || ''}/prompts/${review.promptId}`)}
+                    >
+                      <div className="w-7 h-7 rounded-md bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                        <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">
+                          {review.promptTitle}
+                        </p>
+                        <p className="text-xs text-dark-400">
+                          由 {review.initiatorName} 发起
+                        </p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-dark-500 flex-shrink-0" />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {pendingReviews.length === 0 && (
+                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <CheckCircle className="w-4 h-4 text-emerald-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-white">暂无待评审</p>
+                      <p className="text-xs text-dark-400 mt-1">所有评审已处理完毕</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="p-3 rounded-lg bg-primary-500/10 border border-primary-500/30">
+              )}
+
+              <div
+                className="p-3 rounded-lg bg-primary-500/10 border border-primary-500/30 cursor-pointer hover:bg-primary-500/20 transition-colors"
+                onClick={() => navigate('/reviews')}
+              >
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-lg bg-primary-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
                     <FlaskConical className="w-4 h-4 text-primary-400" />
@@ -571,6 +781,7 @@ export default function Dashboard() {
                         onClick={() => {
                           setImportType('json');
                           setImportPreview([]);
+                          setParsedImportData(null);
                         }}
                         className={`flex-1 p-4 rounded-xl border transition-all ${
                           importType === 'json'
@@ -579,12 +790,13 @@ export default function Dashboard() {
                         }`}
                       >
                         <div className="font-medium">JSON</div>
-                        <div className="text-xs opacity-70 mt-1">支持空间+提示词完整数据</div>
+                        <div className="text-xs opacity-70 mt-1">支持空间+提示词+版本+评论完整数据</div>
                       </button>
                       <button
                         onClick={() => {
                           setImportType('csv');
                           setImportPreview([]);
+                          setParsedImportData(null);
                         }}
                         className={`flex-1 p-4 rounded-xl border transition-all ${
                           importType === 'csv'
@@ -619,13 +831,26 @@ export default function Dashboard() {
                         />
                         <div className="flex-1">
                           <p className="font-medium text-white">导入到新空间</p>
-                          <p className="text-xs text-dark-400 mt-1">创建一个新空间存放导入的提示词</p>
-                          {importTarget === 'new-space' && (
+                          <p className="text-xs text-dark-400 mt-1">
+                            {importType === 'json'
+                              ? '保留原有的空间结构，或创建新空间存放'
+                              : '创建一个新空间存放导入的提示词'}
+                          </p>
+                          {importTarget === 'new-space' && importType === 'csv' && (
                             <input
                               type="text"
                               value={newSpaceName}
                               onChange={(e) => setNewSpaceName(e.target.value)}
                               placeholder="输入空间名称"
+                              className="input-field mt-3 text-sm"
+                            />
+                          )}
+                          {importTarget === 'new-space' && importType === 'json' && (
+                            <input
+                              type="text"
+                              value={newSpaceName}
+                              onChange={(e) => setNewSpaceName(e.target.value)}
+                              placeholder="空间名称（留空则使用导入数据中的名称）"
                               className="input-field mt-3 text-sm"
                             />
                           )}
@@ -697,6 +922,22 @@ export default function Dashboard() {
                         <label className="text-sm font-medium text-dark-300">
                           预览 ({importPreview.length} 条)
                         </label>
+                        {parsedImportData && (
+                          <div className="flex items-center gap-3 text-xs text-dark-500">
+                            {parsedImportData.spaces.length > 0 && (
+                              <span className="flex items-center gap-1">
+                                <FolderPlus className="w-3 h-3" />
+                                {parsedImportData.spaces.length} 空间
+                              </span>
+                            )}
+                            {parsedImportData.versions.length > 0 && (
+                              <span>{parsedImportData.versions.length} 版本</span>
+                            )}
+                            {parsedImportData.comments.length > 0 && (
+                              <span>{parsedImportData.comments.length} 评论</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div className="max-h-48 overflow-y-auto space-y-2 bg-dark-800/30 rounded-lg p-3">
                         {importPreview.slice(0, 5).map((item, index) => (
@@ -704,7 +945,11 @@ export default function Dashboard() {
                             key={index}
                             className="flex items-center gap-3 p-2 rounded-lg bg-dark-700/30"
                           >
-                            <FileText className="w-4 h-4 text-primary-400" />
+                            {item.title !== undefined ? (
+                              <FileText className="w-4 h-4 text-primary-400" />
+                            ) : (
+                              <FolderKanban className="w-4 h-4 text-blue-400" />
+                            )}
                             <span className="text-sm text-dark-200 truncate flex-1">
                               {item.title || item.name || '未命名'}
                             </span>
@@ -731,7 +976,7 @@ export default function Dashboard() {
                       disabled={
                         isImporting ||
                         importPreview.length === 0 ||
-                        (importTarget === 'new-space' && !newSpaceName.trim()) ||
+                        (importTarget === 'new-space' && importType === 'csv' && !newSpaceName.trim()) ||
                         (importTarget === 'existing-space' && !selectedSpaceId)
                       }
                       className="flex-1 btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -814,7 +1059,7 @@ export default function Dashboard() {
                   <div>
                     <p className="font-medium text-white">导出 JSON</p>
                     <p className="text-xs text-dark-400">
-                      完整导出空间和提示词数据，包含变量、步骤等详细信息
+                      完整导出空间、提示词、版本和评论数据，可完整重新导入
                     </p>
                   </div>
                 </button>
@@ -838,7 +1083,7 @@ export default function Dashboard() {
               <div className="mt-6 p-3 rounded-lg bg-dark-800/50 border border-dark-700">
                 <p className="text-xs text-dark-400">
                   <AlertCircle className="w-4 h-4 inline mr-1 align-text-bottom" />
-                  当前共 {activeSpaces.length} 个空间、{activePrompts.length} 条提示词
+                  当前共 {activeSpaces.length} 个空间、{activePrompts.length} 条提示词、{versions.length} 个版本、{comments.length} 条评论
                 </p>
               </div>
             </motion.div>

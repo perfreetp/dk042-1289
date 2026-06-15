@@ -36,7 +36,7 @@ import {
   Shield,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
-import type { Variable, Step, Example, Version } from '../../types';
+import type { Variable, Step, Example, Version, FieldChange } from '../../types';
 
 type TabType = 'content' | 'variables' | 'steps' | 'examples' | 'notes' | 'history' | 'comments';
 
@@ -63,6 +63,7 @@ export default function PromptEditor() {
     deletePrompt,
     members,
     spaces,
+    getLatestReviewForPrompt,
   } = useAppStore();
 
   const isNew = promptId === 'new';
@@ -70,6 +71,7 @@ export default function PromptEditor() {
   const versions = !isNew ? getVersionsByPromptId(promptId!) : [];
   const comments = !isNew ? getCommentsByPromptId(promptId!) : [];
   const currentUser = getCurrentUser();
+  const latestReview = !isNew ? getLatestReviewForPrompt(promptId!) : undefined;
 
   const hasEditPermission = spaceId ? canEditPrompt(spaceId) : false;
   const hasDeletePermission = spaceId ? canDeletePrompt(spaceId) : false;
@@ -82,6 +84,7 @@ export default function PromptEditor() {
   const [compareVersions, setCompareVersions] = useState<string[]>([]);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -139,7 +142,7 @@ export default function PromptEditor() {
     { id: 'comments' as TabType, label: '评论讨论', icon: MessageSquare },
   ];
 
-  const handleSave = () => {
+  const handleSave = (status: 'draft' | 'published') => {
     if (!title.trim()) return;
 
     if (isNew) {
@@ -150,7 +153,7 @@ export default function PromptEditor() {
         content,
         category,
         tags,
-        status: 'draft',
+        status,
         variables,
         steps,
         examples,
@@ -161,23 +164,27 @@ export default function PromptEditor() {
       navigate(`/spaces/${spaceId}`);
     } else {
       const newVersionNumber = (prompt?.currentVersion || 0) + 1;
-      addVersion({
-        promptId: promptId!,
-        versionNumber: newVersionNumber,
-        content,
-        variables,
-        steps,
-        examples,
-        notes,
-        createdBy: currentUser?.id || 'user-1',
-        createdByName: currentUser?.name || '张明',
-        changeLog: changeLog || `更新版本 v${newVersionNumber}`,
-      });
+      addVersion(
+        {
+          promptId: promptId!,
+          versionNumber: newVersionNumber,
+          content,
+          variables,
+          steps,
+          examples,
+          notes,
+          createdBy: currentUser?.id || 'user-1',
+          createdByName: currentUser?.name || '张明',
+          changeLog: changeLog || `更新版本 v${newVersionNumber}`,
+        },
+        status
+      );
       updatePrompt(promptId!, {
         title,
         description,
         category,
         tags,
+        status,
       });
       setIsEditing(false);
     }
@@ -306,11 +313,13 @@ ${result}
   };
 
   const handleInitiateReview = () => {
-    if (!prompt || !spaceId) return;
+    if (!prompt || !spaceId || reviewers.length === 0) return;
 
-    const spaceMembers = members.filter((m) => m.spaceId === spaceId && m.userId !== currentUser?.id);
-    const reviewerIds = spaceMembers.slice(0, 2).map((m) => m.userId);
-    const reviewerNames = spaceMembers.slice(0, 2).map((m) => m.name);
+    const selectedMembers = members.filter(
+      (m) => m.spaceId === spaceId && reviewers.includes(m.userId)
+    );
+    const reviewerIds = selectedMembers.map((m) => m.userId);
+    const reviewerNames = selectedMembers.map((m) => m.name);
 
     createReview({
       promptId: prompt.id,
@@ -356,6 +365,85 @@ ${result}
       </div>
     );
   };
+
+  const renderReviewStatusBadge = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-400">
+            <Clock className="w-3 h-3" />
+            待评审
+          </span>
+        );
+      case 'reviewing':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-500/20 text-blue-400">
+            <Eye className="w-3 h-3" />
+            评审中
+          </span>
+        );
+      case 'approved':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/20 text-emerald-400">
+            <CheckCircle className="w-3 h-3" />
+            已通过
+          </span>
+        );
+      case 'rejected':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-rose-500/20 text-rose-400">
+            <X className="w-3 h-3" />
+            已拒绝
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const renderVersionStatusTag = (status: 'draft' | 'published') => {
+    if (status === 'draft') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-400">
+          <Edit3 className="w-3 h-3" />
+          草稿
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/20 text-emerald-400">
+        <CheckCircle className="w-3 h-3" />
+        已发布
+      </span>
+    );
+  };
+
+  const renderFieldChange = (change: FieldChange, idx: number) => (
+    <div
+      key={idx}
+      className="p-3 bg-dark-800/50 rounded-lg border border-dark-700/50 space-y-2"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-primary-400 bg-primary-500/10 px-2 py-0.5 rounded">
+          {change.field}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-xs text-dark-500 mb-1">旧值</p>
+          <div className="p-2 bg-rose-500/5 border border-rose-500/20 rounded text-xs text-rose-300 font-mono line-clamp-3 whitespace-pre-wrap">
+            {change.oldValue}
+          </div>
+        </div>
+        <div>
+          <p className="text-xs text-dark-500 mb-1">新值</p>
+          <div className="p-2 bg-emerald-500/5 border border-emerald-500/20 rounded text-xs text-emerald-300 font-mono line-clamp-3 whitespace-pre-wrap">
+            {change.newValue}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   const renderContent = () => {
     switch (activeTab) {
@@ -877,11 +965,19 @@ ${result}
                     transition={{ delay: index * 0.03 }}
                     className="glass-card p-4"
                   >
-                    <div className="flex items-center gap-4">
+                    <div
+                      className="flex items-center gap-4 cursor-pointer"
+                      onClick={() =>
+                        setExpandedVersionId(
+                          expandedVersionId === version.id ? null : version.id
+                        )
+                      }
+                    >
                       <input
                         type="checkbox"
                         checked={compareVersions.includes(version.id)}
                         onChange={(e) => {
+                          e.stopPropagation();
                           if (e.target.checked) {
                             if (compareVersions.length < 2) {
                               setCompareVersions([...compareVersions, version.id]);
@@ -890,6 +986,7 @@ ${result}
                             setCompareVersions(compareVersions.filter((v) => v !== version.id));
                           }
                         }}
+                        onClick={(e) => e.stopPropagation()}
                         className="w-4 h-4 rounded border-dark-600 bg-dark-800 text-primary-500 focus:ring-primary-500/30"
                       />
                       <div className="w-10 h-10 rounded-lg bg-dark-700/50 flex items-center justify-center">
@@ -900,6 +997,7 @@ ${result}
                       <div className="flex-1">
                         <div className="flex items-center gap-3">
                           <h4 className="font-medium text-white">版本 {version.versionNumber}</h4>
+                          {renderVersionStatusTag(version.status)}
                           {version.versionNumber === prompt?.currentVersion && (
                             <span className="tag tag-success">当前版本</span>
                           )}
@@ -909,16 +1007,48 @@ ${result}
                           {version.createdByName} · {new Date(version.createdAt).toLocaleString('zh-CN')}
                         </p>
                       </div>
-                      {version.versionNumber !== prompt?.currentVersion && hasEditPermission && (
-                        <button
-                          onClick={() => handleRollback(version.id)}
-                          className="btn-ghost text-sm flex items-center gap-1"
-                        >
-                          <RotateCcw className="w-4 h-4" />
-                          回滚
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {version.changes && version.changes.length > 0 && (
+                          <span className="text-xs text-dark-500 flex items-center gap-1">
+                            {version.changes.length} 项变更
+                            {expandedVersionId === version.id ? (
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            )}
+                          </span>
+                        )}
+                        {version.versionNumber !== prompt?.currentVersion && hasEditPermission && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRollback(version.id);
+                            }}
+                            className="btn-ghost text-sm flex items-center gap-1"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                            回滚
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    <AnimatePresence>
+                      {expandedVersionId === version.id && version.changes && version.changes.length > 0 && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="mt-3 pt-3 border-t border-dark-700/50 space-y-2">
+                            <p className="text-xs text-dark-500 font-medium mb-2">变更详情</p>
+                            {version.changes.map((change, idx) => renderFieldChange(change, idx))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </motion.div>
                 ))}
               </div>
@@ -1023,7 +1153,7 @@ ${result}
         </div>
         {!isNew && !hasEditPermission && (
           <span className="tag tag-warning flex items-center gap-1 ml-4">
-            <Eye className="w-3 h-3" />
+            <Shield className="w-3 h-3" />
             只读模式
           </span>
         )}
@@ -1067,9 +1197,21 @@ ${result}
           <div className="glass-card p-4 space-y-3">
             {isEditing ? (
               <>
-                <button onClick={handleSave} className="btn-primary w-full flex items-center justify-center gap-2">
-                  <Save className="w-4 h-4" />
-                  保存提示词
+                {hasEditPermission && (
+                  <button
+                    onClick={() => handleSave('draft')}
+                    className="btn-secondary w-full flex items-center justify-center gap-2"
+                  >
+                    <Save className="w-4 h-4" />
+                    保存草稿
+                  </button>
+                )}
+                <button
+                  onClick={() => handleSave('published')}
+                  className="btn-primary w-full flex items-center justify-center gap-2"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  发布
                 </button>
                 <button
                   onClick={() => {
@@ -1136,6 +1278,37 @@ ${result}
               </div>
             </div>
           </div>
+
+          {latestReview && (
+            <div className="glass-card p-4">
+              <h3 className="font-medium text-white mb-3 flex items-center gap-2">
+                <FileCheck className="w-4 h-4 text-primary-400" />
+                评审状态
+              </h3>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-dark-400 text-sm">最新状态</span>
+                  {renderReviewStatusBadge(latestReview.status)}
+                </div>
+                {latestReview.conclusion && (
+                  <div>
+                    <span className="text-dark-400 text-sm">评审结论</span>
+                    <p className="text-dark-300 text-sm mt-1">{latestReview.conclusion}</p>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-dark-400 text-sm">发起人</span>
+                  <span className="text-white text-sm">{latestReview.initiatorName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-dark-400 text-sm">评审时间</span>
+                  <span className="text-white text-sm">
+                    {new Date(latestReview.updatedAt).toLocaleString('zh-CN')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {!isNew && (
             <div className="glass-card p-4">
@@ -1412,12 +1585,11 @@ ${result}
 
                 <div>
                   <label className="block text-sm font-medium text-dark-300 mb-2">
-                    评审人
+                    选择评审人
                   </label>
                   <div className="space-y-2">
                     {spaceMembers
                       .filter((m) => m.userId !== currentUser?.id)
-                      .slice(0, 3)
                       .map((member) => (
                         <label
                           key={member.id}
@@ -1444,6 +1616,9 @@ ${result}
                           </div>
                         </label>
                       ))}
+                    {spaceMembers.filter((m) => m.userId !== currentUser?.id).length === 0 && (
+                      <p className="text-sm text-dark-500 py-2">暂无可选评审人</p>
+                    )}
                   </div>
                 </div>
 
@@ -1470,7 +1645,8 @@ ${result}
                 </button>
                 <button
                   onClick={handleInitiateReview}
-                  className="flex-1 btn-primary"
+                  disabled={reviewers.length === 0}
+                  className="flex-1 btn-primary disabled:opacity-50"
                 >
                   发起评审
                 </button>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, ChevronDown, CheckCircle, Eye, Edit3, Shield, Crown, Settings } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
+import type { Member, User } from '../../types';
 
 export default function RoleSwitcher() {
   const {
@@ -77,10 +78,10 @@ export default function RoleSwitcher() {
         .map((m) => {
           const user = users.find((u) => u.id === m.userId);
           const space = spaces.find((s) => s.id === m.spaceId);
-          return { ...m, user, spaceName: space?.name };
+          return { ...m, user, spaceName: space?.name || '' };
         })
         .filter((m) => m.userId !== currentUserId)
-        .slice(0, 4);
+        .slice(0, 4) as Array<Member & { user?: User; spaceName: string }>;
 
   const currentRole = currentSpaceId ? getCurrentUserRoleInSpace(currentSpaceId) : null;
 

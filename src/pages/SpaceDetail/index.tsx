@@ -24,6 +24,7 @@ import {
   BarChart3,
   HeadphonesIcon,
   GraduationCap,
+  Shield,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 
@@ -41,11 +42,14 @@ const categories = ['全部', '营销文案', '需求文档', '前端开发', '�
 export default function SpaceDetail() {
   const { spaceId } = useParams();
   const navigate = useNavigate();
-  const { spaces, prompts, deletePrompt } = useAppStore();
+  const { spaces, prompts, deletePrompt, canEditPrompt, canDeletePrompt } = useAppStore();
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('全部');
   const [sortBy, setSortBy] = useState('updated');
+
+  const canEdit = canEditPrompt(spaceId || '');
+  const canDel = canDeletePrompt(spaceId || '');
 
   const space = spaces.find((s) => s.id === spaceId);
   const IconComponent = space ? iconMap[space.icon] || PenTool : PenTool;
@@ -96,10 +100,16 @@ export default function SpaceDetail() {
         >
           <IconComponent className="w-6 h-6" style={{ color: space.color }} />
         </div>
-        <div>
+        <div className="flex items-center gap-3">
           <h1 className="font-display text-2xl font-bold text-white">{space.name}</h1>
-          <p className="text-sm text-dark-400">{space.description}</p>
+          {!canEdit && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-medium">
+              <Eye className="w-3.5 h-3.5" />
+              只读模式
+            </span>
+          )}
         </div>
+        <p className="text-sm text-dark-400">{space.description}</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -205,13 +215,15 @@ export default function SpaceDetail() {
               </button>
             </div>
 
-            <button
-              onClick={() => navigate(`/spaces/${spaceId}/prompts/new`)}
-              className="btn-primary flex items-center gap-2 text-sm"
-            >
-              <Plus className="w-4 h-4" />
-              新建提示词
-            </button>
+            {canEdit && (
+              <button
+                onClick={() => navigate(`/spaces/${spaceId}/prompts/new`)}
+                className="btn-primary flex items-center gap-2 text-sm"
+              >
+                <Plus className="w-4 h-4" />
+                新建提示词
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -239,15 +251,17 @@ export default function SpaceDetail() {
                 >
                   {prompt.status === 'published' ? '已发布' : prompt.status === 'draft' ? '草稿' : '已归档'}
                 </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeletePrompt(prompt.id);
-                  }}
-                  className="p-1.5 text-dark-500 hover:text-rose-400 hover:bg-dark-700/50 rounded-md opacity-0 group-hover:opacity-100 transition-all"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {canDel && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeletePrompt(prompt.id);
+                    }}
+                    className="p-1.5 text-dark-500 hover:text-rose-400 hover:bg-dark-700/50 rounded-md opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
               <h3 className="font-display text-lg font-semibold text-white mb-2 group-hover:text-primary-400 transition-colors line-clamp-1">
@@ -294,7 +308,9 @@ export default function SpaceDetail() {
                 <th className="text-left px-6 py-4 text-sm font-medium text-dark-400">浏览量</th>
                 <th className="text-left px-6 py-4 text-sm font-medium text-dark-400">测试数</th>
                 <th className="text-left px-6 py-4 text-sm font-medium text-dark-400">更新时间</th>
-                <th className="text-right px-6 py-4 text-sm font-medium text-dark-400">操作</th>
+                {canDel && (
+                  <th className="text-right px-6 py-4 text-sm font-medium text-dark-400">操作</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -346,17 +362,19 @@ export default function SpaceDetail() {
                       {new Date(prompt.updatedAt).toLocaleDateString('zh-CN')}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeletePrompt(prompt.id);
-                      }}
-                      className="p-2 text-dark-400 hover:text-rose-400 hover:bg-dark-700/50 rounded-lg transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
+                  {canDel && (
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeletePrompt(prompt.id);
+                        }}
+                        className="p-2 text-dark-400 hover:text-rose-400 hover:bg-dark-700/50 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  )}
                 </motion.tr>
               ))}
             </tbody>
@@ -369,13 +387,15 @@ export default function SpaceDetail() {
           <FileText className="w-16 h-16 text-dark-600 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-dark-300 mb-2">暂无提示词</h3>
           <p className="text-dark-500 mb-6">创建你的第一个提示词，开始沉淀团队知识</p>
-          <button
-            onClick={() => navigate(`/spaces/${spaceId}/prompts/new`)}
-            className="btn-primary inline-flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            新建提示词
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => navigate(`/spaces/${spaceId}/prompts/new`)}
+              className="btn-primary inline-flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              新建提示词
+            </button>
+          )}
         </div>
       )}
     </div>
