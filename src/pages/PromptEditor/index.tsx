@@ -29,6 +29,11 @@ import {
   StickyNote,
   GitCompare,
   RotateCcw,
+  Star,
+  Send,
+  FileCheck,
+  Users,
+  Shield,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import type { Variable, Step, Example, Version } from '../../types';
@@ -38,17 +43,45 @@ type TabType = 'content' | 'variables' | 'steps' | 'examples' | 'notes' | 'histo
 export default function PromptEditor() {
   const { spaceId, promptId } = useParams();
   const navigate = useNavigate();
-  const { prompts, createPrompt, updatePrompt, addVersion, incrementViewCount, getVersionsByPromptId, rollbackToVersion } = useAppStore();
+  const {
+    prompts,
+    createPrompt,
+    updatePrompt,
+    addVersion,
+    incrementViewCount,
+    getVersionsByPromptId,
+    rollbackToVersion,
+    addTestRecord,
+    getTestRecordsByPromptId,
+    addComment,
+    getCommentsByPromptId,
+    createReview,
+    getCurrentUser,
+    canEditPrompt,
+    canDeletePrompt,
+    canInitiateReview,
+    deletePrompt,
+    members,
+    spaces,
+  } = useAppStore();
 
   const isNew = promptId === 'new';
   const prompt = !isNew ? prompts.find((p) => p.id === promptId) : null;
   const versions = !isNew ? getVersionsByPromptId(promptId!) : [];
+  const comments = !isNew ? getCommentsByPromptId(promptId!) : [];
+  const currentUser = getCurrentUser();
+
+  const hasEditPermission = spaceId ? canEditPrompt(spaceId) : false;
+  const hasDeletePermission = spaceId ? canDeletePrompt(spaceId) : false;
+  const hasReviewPermission = spaceId ? canInitiateReview(spaceId) : false;
 
   const [activeTab, setActiveTab] = useState<TabType>('content');
   const [isEditing, setIsEditing] = useState(isNew);
   const [showTestPanel, setShowTestPanel] = useState(false);
   const [showVersionDiff, setShowVersionDiff] = useState(false);
   const [compareVersions, setCompareVersions] = useState<string[]>([]);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -65,12 +98,14 @@ export default function PromptEditor() {
   const [testInputs, setTestInputs] = useState<Record<string, string>>({});
   const [testOutput, setTestOutput] = useState('');
   const [isTesting, setIsTesting] = useState(false);
+  const [testRating, setTestRating] = useState(0);
+  const [testNote, setTestNote] = useState('');
+  const [testStartTime, setTestStartTime] = useState(0);
+  const [saveRecordSuccess, setSaveRecordSuccess] = useState(false);
 
-  const [comments, setComments] = useState([
-    { id: '1', user: '李华', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=lihua', content: '这个提示词效果很好！', time: '2小时前' },
-    { id: '2', user: '王芳', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=wangfang', content: '建议增加更多变量选项', time: '1天前' },
-  ]);
   const [newComment, setNewComment] = useState('');
+  const [reviewers, setReviewers] = useState<string[]>([]);
+  const [reviewNote, setReviewNote] = useState('');
 
   useEffect(() => {
     if (prompt && !isNew) {
@@ -120,8 +155,8 @@ export default function PromptEditor() {
         steps,
         examples,
         notes,
-        createdBy: 'user-1',
-        createdByName: '张明',
+        createdBy: currentUser?.id || 'user-1',
+        createdByName: currentUser?.name || '张明',
       });
       navigate(`/spaces/${spaceId}`);
     } else {
@@ -134,8 +169,8 @@ export default function PromptEditor() {
         steps,
         examples,
         notes,
-        createdBy: 'user-1',
-        createdByName: '张明',
+        createdBy: currentUser?.id || 'user-1',
+        createdByName: currentUser?.name || '张明',
         changeLog: changeLog || `更新版本 v${newVersionNumber}`,
       });
       updatePrompt(promptId!, {
@@ -209,6 +244,8 @@ export default function PromptEditor() {
 
   const handleRunTest = async () => {
     setIsTesting(true);
+    setTestStartTime(Date.now());
+    setSaveRecordSuccess(false);
     await new Promise((resolve) => setTimeout(resolve, 1500));
 
     let result = content;
@@ -226,6 +263,27 @@ ${result}
     setIsTesting(false);
   };
 
+  const handleSaveTestRecord = () => {
+    if (!testOutput || !prompt) return;
+
+    const duration = Date.now() - testStartTime;
+    addTestRecord({
+      promptId: prompt.id,
+      promptTitle: prompt.title,
+      promptVersion: prompt.currentVersion,
+      inputValues: { ...testInputs },
+      output: testOutput,
+      duration: Math.max(duration, 1000),
+      createdBy: currentUser?.id || 'user-1',
+      createdByName: currentUser?.name || '张明',
+      rating: testRating || undefined,
+      note: testNote || undefined,
+    });
+
+    setSaveRecordSuccess(true);
+    setTimeout(() => setSaveRecordSuccess(false), 2000);
+  };
+
   const handleRollback = (versionId: string) => {
     if (confirm('确定要回滚到这个版本吗？这将创建一个新版本。')) {
       rollbackToVersion(promptId!, versionId);
@@ -233,18 +291,70 @@ ${result}
   };
 
   const handleAddComment = () => {
-    if (!newComment.trim()) return;
-    setComments([
-      {
-        id: Date.now().toString(),
-        user: '张明',
-        avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=zhangming',
-        content: newComment,
-        time: '刚刚',
-      },
-      ...comments,
-    ]);
+    if (!newComment.trim() || !prompt) return;
+
+    addComment({
+      promptId: prompt.id,
+      userId: currentUser?.id || 'user-1',
+      userName: currentUser?.name || '张明',
+      userAvatar: currentUser?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=zhangming',
+      content: newComment,
+      parentId: null,
+    });
+
     setNewComment('');
+  };
+
+  const handleInitiateReview = () => {
+    if (!prompt || !spaceId) return;
+
+    const spaceMembers = members.filter((m) => m.spaceId === spaceId && m.userId !== currentUser?.id);
+    const reviewerIds = spaceMembers.slice(0, 2).map((m) => m.userId);
+    const reviewerNames = spaceMembers.slice(0, 2).map((m) => m.name);
+
+    createReview({
+      promptId: prompt.id,
+      promptTitle: prompt.title,
+      status: 'pending',
+      initiator: currentUser?.id || 'user-1',
+      initiatorName: currentUser?.name || '张明',
+      reviewers: reviewerIds,
+      reviewerNames: reviewerNames,
+      conclusion: reviewNote || '',
+    });
+
+    setShowReviewModal(false);
+    setReviewNote('');
+    setReviewers([]);
+    alert('评审已发起！请前往评审中心查看。');
+  };
+
+  const handleDelete = () => {
+    if (!prompt || !confirm('确定要删除这个提示词吗？可以在回收站中恢复。')) return;
+    deletePrompt(prompt.id);
+    navigate(`/spaces/${spaceId}`);
+  };
+
+  const getRatingStars = (rating: number, interactive = false) => {
+    return (
+      <div className="flex items-center gap-0.5">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <button
+            key={star}
+            type="button"
+            onClick={interactive ? () => setTestRating(star) : undefined}
+            className={interactive ? 'cursor-pointer hover:scale-110 transition-transform' : ''}
+            disabled={!interactive}
+          >
+            <Star
+              className={`w-4 h-4 ${
+                star <= rating ? 'text-amber-400 fill-amber-400' : 'text-dark-600'
+              }`}
+            />
+          </button>
+        ))}
+      </div>
+    );
   };
 
   const renderContent = () => {
@@ -366,6 +476,34 @@ ${result}
                       <Share2 className="w-4 h-4" />
                       分享
                     </button>
+                    {hasDeletePermission && (
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowMoreMenu(!showMoreMenu)}
+                          className="btn-ghost p-2"
+                        >
+                          <MoreHorizontal className="w-4 h-4" />
+                        </button>
+                        <AnimatePresence>
+                          {showMoreMenu && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
+                              className="absolute right-0 top-full mt-1 w-32 py-2 bg-dark-700 border border-dark-600 rounded-lg shadow-xl z-10"
+                            >
+                              <button
+                                onClick={handleDelete}
+                                className="w-full px-4 py-2 text-left text-sm text-rose-400 hover:bg-dark-600 transition-colors flex items-center gap-2"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                删除
+                              </button>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -404,7 +542,7 @@ ${result}
               <p className="text-dark-400 text-sm">
                 定义提示词中的变量，使用 {'{{变量名}}'} 格式占位
               </p>
-              {isEditing && (
+              {isEditing && hasEditPermission && (
                 <button onClick={handleAddVariable} className="btn-secondary flex items-center gap-2 text-sm">
                   <Plus className="w-4 h-4" />
                   添加变量
@@ -426,7 +564,7 @@ ${result}
                     animate={{ opacity: 1, y: 0 }}
                     className="glass-card p-4"
                   >
-                    {isEditing ? (
+                    {isEditing && hasEditPermission ? (
                       <div className="grid grid-cols-12 gap-3">
                         <div className="col-span-3">
                           <label className="text-xs text-dark-400 mb-1 block">变量名</label>
@@ -509,7 +647,7 @@ ${result}
           <div className="space-y-4">
             <div className="flex items-center justify-between mb-4">
               <p className="text-dark-400 text-sm">分步说明如何使用这个提示词</p>
-              {isEditing && (
+              {isEditing && hasEditPermission && (
                 <button onClick={handleAddStep} className="btn-secondary flex items-center gap-2 text-sm">
                   <Plus className="w-4 h-4" />
                   添加步骤
@@ -536,7 +674,7 @@ ${result}
                       {step.order || index + 1}
                     </div>
                     <div className="flex-1 glass-card p-4">
-                      {isEditing ? (
+                      {isEditing && hasEditPermission ? (
                         <div className="space-y-3">
                           <input
                             type="text"
@@ -581,7 +719,7 @@ ${result}
           <div className="space-y-4">
             <div className="flex items-center justify-between mb-4">
               <p className="text-dark-400 text-sm">展示示例输入和输出，帮助理解使用方法</p>
-              {isEditing && (
+              {isEditing && hasEditPermission && (
                 <button onClick={handleAddExample} className="btn-secondary flex items-center gap-2 text-sm">
                   <Plus className="w-4 h-4" />
                   添加示例
@@ -603,7 +741,7 @@ ${result}
                     animate={{ opacity: 1, y: 0 }}
                     className="glass-card p-5"
                   >
-                    {isEditing ? (
+                    {isEditing && hasEditPermission ? (
                       <div className="space-y-3">
                         <input
                           type="text"
@@ -682,7 +820,7 @@ ${result}
           <div className="space-y-4">
             <p className="text-dark-400 text-sm">记录使用时需要注意的事项和限制条件</p>
 
-            {isEditing ? (
+            {isEditing && hasEditPermission ? (
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -771,7 +909,7 @@ ${result}
                           {version.createdByName} · {new Date(version.createdAt).toLocaleString('zh-CN')}
                         </p>
                       </div>
-                      {version.versionNumber !== prompt?.currentVersion && (
+                      {version.versionNumber !== prompt?.currentVersion && hasEditPermission && (
                         <button
                           onClick={() => handleRollback(version.id)}
                           className="btn-ghost text-sm flex items-center gap-1"
@@ -793,7 +931,7 @@ ${result}
           <div className="space-y-6">
             <div className="flex items-center gap-3 mb-6">
               <img
-                src="https://api.dicebear.com/7.x/avataaars/svg?seed=zhangming"
+                src={currentUser?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=zhangming'}
                 alt="头像"
                 className="w-10 h-10 rounded-full"
               />
@@ -808,8 +946,9 @@ ${result}
                 <button
                   onClick={handleAddComment}
                   disabled={!newComment.trim()}
-                  className="absolute right-2 bottom-2 btn-primary text-sm py-1.5 px-4 disabled:opacity-50"
+                  className="absolute right-2 bottom-2 btn-primary text-sm py-1.5 px-4 disabled:opacity-50 flex items-center gap-1"
                 >
+                  <Send className="w-3.5 h-3.5" />
                   发送
                 </button>
               </div>
@@ -824,14 +963,16 @@ ${result}
                   className="flex gap-4"
                 >
                   <img
-                    src={comment.avatar}
-                    alt={comment.user}
+                    src={comment.userAvatar}
+                    alt={comment.userName}
                     className="w-10 h-10 rounded-full flex-shrink-0"
                   />
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-white">{comment.user}</span>
-                      <span className="text-xs text-dark-500">{comment.time}</span>
+                      <span className="font-medium text-white">{comment.userName}</span>
+                      <span className="text-xs text-dark-500">
+                        {new Date(comment.createdAt).toLocaleString('zh-CN')}
+                      </span>
                     </div>
                     <p className="text-dark-300">{comment.content}</p>
                     <div className="flex items-center gap-4 mt-2">
@@ -846,6 +987,13 @@ ${result}
                 </motion.div>
               ))}
             </div>
+
+            {comments.length === 0 && (
+              <div className="text-center py-12 text-dark-500">
+                <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p>暂无评论，来发表第一条评论吧</p>
+              </div>
+            )}
           </div>
         );
 
@@ -854,8 +1002,10 @@ ${result}
     }
   };
 
+  const spaceMembers = spaceId ? members.filter((m) => m.spaceId === spaceId) : [];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" onClick={() => setShowMoreMenu(false)}>
       <div className="flex items-center gap-4">
         <button
           onClick={() => navigate(`/spaces/${spaceId}`)}
@@ -871,6 +1021,12 @@ ${result}
             {isNew ? '创建一个新的提示词' : `当前版本 v${prompt?.currentVersion || 1}`}
           </p>
         </div>
+        {!isNew && !hasEditPermission && (
+          <span className="tag tag-warning flex items-center gap-1 ml-4">
+            <Eye className="w-3 h-3" />
+            只读模式
+          </span>
+        )}
       </div>
 
       <div className="flex gap-6">
@@ -892,6 +1048,11 @@ ${result}
                     >
                       <Icon className="w-4 h-4" />
                       {tab.label}
+                      {tab.id === 'comments' && comments.length > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 bg-dark-700 rounded-full">
+                          {comments.length}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -929,13 +1090,24 @@ ${result}
                   <Play className="w-4 h-4" />
                   在线试跑
                 </button>
-                <button
-                  onClick={() => setIsEditing(true)}
-                  className="btn-secondary w-full flex items-center justify-center gap-2"
-                >
-                  <Edit3 className="w-4 h-4" />
-                  编辑提示词
-                </button>
+                {hasEditPermission && (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="btn-secondary w-full flex items-center justify-center gap-2"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    编辑提示词
+                  </button>
+                )}
+                {hasReviewPermission && !isNew && (
+                  <button
+                    onClick={() => setShowReviewModal(true)}
+                    className="btn-secondary w-full flex items-center justify-center gap-2 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10"
+                  >
+                    <FileCheck className="w-4 h-4" />
+                    发起评审
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -1107,14 +1279,35 @@ ${result}
                         {testOutput}
                       </pre>
                     </div>
+
+                    <div className="mt-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-dark-400">评分</span>
+                        {getRatingStars(testRating, true)}
+                      </div>
+                      <div>
+                        <label className="text-sm text-dark-400 mb-1 block">备注</label>
+                        <textarea
+                          value={testNote}
+                          onChange={(e) => setTestNote(e.target.value)}
+                          placeholder="记录一下这次测试的感受..."
+                          rows={2}
+                          className="input-field resize-none text-sm"
+                        />
+                      </div>
+                    </div>
+
                     <div className="flex gap-2 mt-4">
                       <button className="btn-secondary flex-1 text-sm flex items-center justify-center gap-2">
                         <Copy className="w-4 h-4" />
                         复制结果
                       </button>
-                      <button className="btn-secondary flex-1 text-sm flex items-center justify-center gap-2">
+                      <button
+                        onClick={handleSaveTestRecord}
+                        className="btn-secondary flex-1 text-sm flex items-center justify-center gap-2 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10"
+                      >
                         <Save className="w-4 h-4" />
-                        保存记录
+                        {saveRecordSuccess ? '已保存 ✓' : '保存记录'}
                       </button>
                     </div>
                   </div>
@@ -1172,6 +1365,115 @@ ${result}
                 <p className="text-xs text-dark-500 mt-4 text-center">
                   * 完整版可集成 diff 库实现逐字差异对比
                 </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showReviewModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-dark-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={() => setShowReviewModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="glass-card w-full max-w-md"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-dark-700/50 flex items-center justify-between">
+                <h2 className="font-display text-xl font-bold text-white">发起评审</h2>
+                <button
+                  onClick={() => setShowReviewModal(false)}
+                  className="p-2 text-dark-400 hover:text-white hover:bg-dark-700/50 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <div>
+                  <label className="block text-sm font-medium text-dark-300 mb-2">
+                    评审提示词
+                  </label>
+                  <div className="p-3 bg-dark-800/50 rounded-lg border border-dark-700/50">
+                    <p className="text-white font-medium">{title}</p>
+                    <p className="text-xs text-dark-500 mt-1">
+                      当前版本 v{prompt?.currentVersion || 1}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-dark-300 mb-2">
+                    评审人
+                  </label>
+                  <div className="space-y-2">
+                    {spaceMembers
+                      .filter((m) => m.userId !== currentUser?.id)
+                      .slice(0, 3)
+                      .map((member) => (
+                        <label
+                          key={member.id}
+                          className="flex items-center gap-3 p-3 bg-dark-800/30 rounded-lg cursor-pointer hover:bg-dark-700/30 transition-colors"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={reviewers.includes(member.userId)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setReviewers([...reviewers, member.userId]);
+                              } else {
+                                setReviewers(reviewers.filter((r) => r !== member.userId));
+                              }
+                            }}
+                            className="w-4 h-4 rounded border-dark-600 bg-dark-800 text-primary-500 focus:ring-primary-500/30"
+                          />
+                          <img src={member.avatar} alt="" className="w-8 h-8 rounded-full" />
+                          <div className="flex-1">
+                            <p className="text-sm text-white">{member.name}</p>
+                            <p className="text-xs text-dark-500">
+                              {member.role === 'owner' ? '所有者' : member.role === 'admin' ? '管理员' : member.role === 'editor' ? '可编辑' : '只读'}
+                            </p>
+                          </div>
+                        </label>
+                      ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-dark-300 mb-2">
+                    评审说明
+                  </label>
+                  <textarea
+                    value={reviewNote}
+                    onChange={(e) => setReviewNote(e.target.value)}
+                    placeholder="请输入评审说明或注意事项..."
+                    rows={3}
+                    className="input-field resize-none text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-dark-700/50 flex gap-3">
+                <button
+                  onClick={() => setShowReviewModal(false)}
+                  className="flex-1 btn-secondary"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleInitiateReview}
+                  className="flex-1 btn-primary"
+                >
+                  发起评审
+                </button>
               </div>
             </motion.div>
           </motion.div>

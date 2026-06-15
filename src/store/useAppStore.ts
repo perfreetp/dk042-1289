@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Space, Prompt, Version, TestRecord, Comment, Review, Member, RecycleItem } from '../types';
+import type { Space, Prompt, Version, TestRecord, Comment, Review, Member, RecycleItem, User } from '../types';
 import {
   mockSpaces,
   mockPrompts,
@@ -9,6 +9,7 @@ import {
   mockComments,
   mockReviews,
   mockMembers,
+  mockUsers,
 } from '../mock';
 
 interface AppState {
@@ -20,11 +21,18 @@ interface AppState {
   reviews: Review[];
   members: Member[];
   recycleItems: RecycleItem[];
+  users: User[];
+  currentUserId: string;
   currentSpaceId: string | null;
   currentPromptId: string | null;
 
   setCurrentSpace: (id: string | null) => void;
   setCurrentPrompt: (id: string | null) => void;
+  getCurrentUser: () => User | undefined;
+  getCurrentUserRoleInSpace: (spaceId: string) => Member['role'] | null;
+  canEditPrompt: (spaceId: string) => boolean;
+  canDeletePrompt: (spaceId: string) => boolean;
+  canInitiateReview: (spaceId: string) => boolean;
 
   createSpace: (space: Omit<Space, 'id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'promptCount' | 'memberCount'>) => void;
   updateSpace: (id: string, data: Partial<Space>) => void;
@@ -70,12 +78,39 @@ export const useAppStore = create<AppState>()(
       comments: mockComments,
       reviews: mockReviews,
       members: mockMembers,
+      users: mockUsers,
       recycleItems: [],
+      currentUserId: 'user-1',
       currentSpaceId: null,
       currentPromptId: null,
 
       setCurrentSpace: (id) => set({ currentSpaceId: id }),
       setCurrentPrompt: (id) => set({ currentPromptId: id }),
+
+      getCurrentUser: () => {
+        return get().users.find((u) => u.id === get().currentUserId);
+      },
+
+      getCurrentUserRoleInSpace: (spaceId) => {
+        const { currentUserId, members } = get();
+        const member = members.find((m) => m.spaceId === spaceId && m.userId === currentUserId);
+        return member?.role || null;
+      },
+
+      canEditPrompt: (spaceId) => {
+        const role = get().getCurrentUserRoleInSpace(spaceId);
+        return role === 'owner' || role === 'admin' || role === 'editor';
+      },
+
+      canDeletePrompt: (spaceId) => {
+        const role = get().getCurrentUserRoleInSpace(spaceId);
+        return role === 'owner' || role === 'admin';
+      },
+
+      canInitiateReview: (spaceId) => {
+        const role = get().getCurrentUserRoleInSpace(spaceId);
+        return role === 'owner' || role === 'admin' || role === 'editor';
+      },
 
       createSpace: (spaceData) => {
         const newSpace: Space = {
